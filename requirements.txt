@@ -1,6 +1,6 @@
 python-telegram-bot==20.7
+Flask==2.3.4
 requests
 beautifulsoup4
 firebase-admin
 python-dotenv
-flask

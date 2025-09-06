@@ -1,21 +1,17 @@
 import os
-import logging
-from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from flask import Flask, request
+from telegram import Update, Bot
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from firebase_config import db
 from erp_api import login_erp, fetch_today_attendance, fetch_subject_attendance, fetch_attendance_dates
-import requests
-
-logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g., https://your-vercel-url.vercel.app/
-
+bot = Bot(TOKEN)
 app = Flask(__name__)
-bot_app = ApplicationBuilder().token(TOKEN).build()
+dp = Dispatcher(bot, None, workers=0)
 
-# ---------- Utils ----------
+# ---------- Firebase Utils ----------
 def save_user(user_id, erp_id, password):
     db.collection("users").document(str(user_id)).set({
         "erp_id": erp_id,
@@ -28,115 +24,99 @@ def get_user(user_id):
 
 def calculate_insights(present, total):
     perc = (present / total) * 100 if total > 0 else 0
-    if perc >= 85: color = "🟢"
-    elif perc >= 75: color = "🟡"
-    elif perc >= 60: color = "🔵"
-    else: color = "🔴"
-    need_for_75 = max(0, int((0.75*total - present)/0.25))
-    can_skip = int(present/0.75 - total) if total>0 else 0
+    if perc >= 85:
+        color = "🟢"
+    elif perc >= 75:
+        color = "🟡"
+    elif perc >= 60:
+        color = "🔵"
+    else:
+        color = "🔴"
+    need_for_75 = max(0, int((0.75 * total - present) / 0.25))
+    can_skip = int(present / 0.75 - total) if total > 0 else 0
     return perc, color, need_for_75, can_skip
 
-# ---------- Handlers ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Welcome!\nRegister using:\n`/register <ERP_ID> <Password>`",
-        parse_mode="Markdown"
-    )
+# ---------- Bot Handlers ----------
+def start(update, context):
+    update.message.reply_text("👋 Welcome!\nRegister using:\n/register <ERP_ID> <Password>")
 
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def register(update, context):
     try:
         erp_id, password = context.args
         save_user(update.effective_user.id, erp_id, password)
-        await update.message.reply_text("✅ Registered! Use /menu to continue")
+        update.message.reply_text("✅ Registered! Use /menu to continue")
     except:
-        await update.message.reply_text("⚠️ Usage: `/register <ERP_ID> <Password>`", parse_mode="Markdown")
+        update.message.reply_text("⚠️ Usage: /register <ERP_ID> <Password>")
 
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def menu(update, context):
     keyboard = [
         [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
         [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
         [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
         [InlineKeyboardButton("ℹ️ About", callback_data="about")]
     ]
-    await update.message.reply_text("Choose:", reply_markup=InlineKeyboardMarkup(keyboard))
+    update.message.reply_text("Choose:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update, context):
     query = update.callback_query
-    await query.answer()
-
+    query.answer()
     user = get_user(query.from_user.id)
     if not user:
-        return await query.edit_message_text("❌ Not registered. Use /register first")
+        return query.edit_message_text("❌ Not registered. Use /register first")
 
     session = login_erp(user["erp_id"], user["password"])
     if not session:
-        return await query.edit_message_text("❌ Login failed. Check credentials")
+        return query.edit_message_text("❌ Login failed. Check credentials")
 
     if query.data == "today":
         today = fetch_today_attendance(session)
         if not today:
-            return await query.edit_message_text("📭 No classes today")
+            return query.edit_message_text("📭 No classes today")
         msg = "📅 *Today's Attendance:*\n\n"
         for t in today:
             status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
             msg += f"• {t['NAME']} ({t['TimeSlot']}) → {status}\n"
-        await query.edit_message_text(msg, parse_mode="Markdown")
+        query.edit_message_text(msg, parse_mode="Markdown")
 
     elif query.data in ("subject", "overall"):
         start_date, end_date = fetch_attendance_dates(session)
         subjects, overall = fetch_subject_attendance(session, start_date, end_date)
-
         if query.data == "subject":
             msg = "📚 *Subject-wise Attendance:*\n\n"
             for s in subjects:
                 present, total = int(s["Present"]), int(s["Total"])
                 perc, color, need, skip = calculate_insights(present, total)
-                msg += (f"{color} {s['NAME']}\n"
-                        f"   ✅ {present}/{total} ({perc:.2f}%)\n"
-                        f"   ➕ Need {need} more for 75%\n"
-                        f"   ➖ Can skip {skip}\n\n")
+                msg += f"{color} {s['NAME']}\n   ✅ {present}/{total} ({perc:.2f}%)\n   ➕ Need {need} more for 75%\n   ➖ Can skip {skip}\n\n"
         else:
             present, total = int(overall["Present"]), int(overall["Total"])
             perc, color, need, skip = calculate_insights(present, total)
-            msg = (f"📊 *Overall Attendance*\n\n"
-                   f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
-                   f"➕ Need {need} more for 75%\n"
-                   f"➖ Can skip {skip}")
-
-        await query.edit_message_text(msg, parse_mode="Markdown")
+            msg = f"📊 *Overall Attendance*\n\n{color} ✅ {present}/{total} ({perc:.2f}%)\n➕ Need {need} more for 75%\n➖ Can skip {skip}"
+        query.edit_message_text(msg, parse_mode="Markdown")
 
     elif query.data == "about":
         msg = ("ℹ️ *About This Bot*\n\n"
                "📌 Tracks ERP attendance.\n"
                "🛠 Built with Python, Telegram API, Firebase.\n"
-               "☁️ Deployable on Vercel.\n\n"
                "👨‍💻 Developer: Aryan (B.Tech CSE)")
-        await query.edit_message_text(msg, parse_mode="Markdown")
+        query.edit_message_text(msg, parse_mode="Markdown")
 
-# ---------- Flask routes ----------
-@app.route("/", methods=["GET"])
-def index():
-    return "✅ Bot is running!"
+# ---------- Register Handlers ----------
+dp.add_handler(CommandHandler("start", start))
+dp.add_handler(CommandHandler("register", register))
+dp.add_handler(CommandHandler("menu", menu))
+dp.add_handler(CallbackQueryHandler(button_handler))
 
+# ---------- Flask Webhook ----------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot_app.bot)
-    bot_app.update_queue.put(update)
-    return jsonify({"ok": True})
+    update = Update.de_json(request.get_json(force=True), bot)
+    dp.process_update(update)
+    return "OK"
 
-# ---------- Set Telegram webhook ----------
-def set_webhook():
-    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={WEBHOOK_URL}/{TOKEN}"
-    resp = requests.get(url)
-    print(resp.text)
+@app.route("/")
+def index():
+    return "ERP Attendance Bot is running!"
 
-# ---------- Register handlers ----------
-bot_app.add_handler(CommandHandler("start", start))
-bot_app.add_handler(CommandHandler("register", register))
-bot_app.add_handler(CommandHandler("menu", menu))
-bot_app.add_handler(CallbackQueryHandler(button_handler))
-
-# ---------- Run ----------
+# ---------- Run Server ----------
 if __name__ == "__main__":
-    set_webhook()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

@@ -11,6 +11,8 @@ from telegram.ext import (
     MessageHandler, ConversationHandler, ContextTypes, filters
 )
 from firebase_admin import credentials, firestore, initialize_app
+import requests
+from bs4 import BeautifulSoup
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -68,9 +70,6 @@ def calculate_insights(present, total):
     return perc, color, need_for_75, can_skip
 
 # ---------- ERP Functions ----------
-import requests
-from bs4 import BeautifulSoup
-
 LOGIN_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/LoginMob"
 TODAY_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/TodayAttendenceRecord"
 SUBJECT_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/AttendenceSubject"
@@ -139,13 +138,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def register_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text("✏️ Please enter your ERP ID:")
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu")]
+    ]
+    await query.message.reply_text("✏️ Please enter your ERP ID:", reply_markup=InlineKeyboardMarkup(keyboard))
     return ASK_ERP
 
 async def ask_erp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     temp_data[user_id] = {"erp_id": update.message.text}
-    await update.message.reply_text("🔑 Now enter your ERP Password:")
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu")]
+    ]
+    await update.message.reply_text("🔑 Now enter your ERP Password:", reply_markup=InlineKeyboardMarkup(keyboard))
     return ASK_PASS
 
 async def ask_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -160,22 +165,23 @@ async def ask_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_user(user_id, erp_id, password)
 
-    await update.message.reply_text(f"✅ Registered successfully!\nERP ID: {erp_id}")
     temp_data.pop(user_id, None)
+
+    keyboard = [
+        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
+    ]
+    await update.message.reply_text(
+        f"✅ Registered successfully!\nERP ID: {erp_id}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Registration cancelled.")
+    keyboard = [
+        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
+    ]
+    await update.message.reply_text("❌ Registration cancelled.", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
-
-# ---------- Old /register command ----------
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        erp_id, password = context.args
-        save_user(update.effective_user.id, erp_id, password)
-        await update.message.reply_text("✅ Registered! Use /menu to continue")
-    except:
-        await update.message.reply_text("⚠️ Usage: `/register <ERP_ID> <Password>`", parse_mode="Markdown")
 
 # ---------- Menu + Buttons ----------
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,13 +196,24 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if query.data == "menu":
+        keyboard = [
+            [InlineKeyboardButton("📝 Register", callback_data="register")],
+            [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
+            [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
+            [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
+            [InlineKeyboardButton("ℹ️ About", callback_data="about")]
+        ]
+        return await query.edit_message_text("📊 Main Menu:", reply_markup=InlineKeyboardMarkup(keyboard))
+
     user = get_user(query.from_user.id)
     if not user:
-        return await query.edit_message_text("❌ Not registered. Use /register first")
+        return await query.edit_message_text("❌ Not registered. Please register first from /start")
 
     session = login_erp(user["erp_id"], user["password"])
     if not session:
-        return await query.edit_message_text("❌ Login failed. Check credentials")
+        return await query.edit_message_text("❌ Login failed. Check your ERP credentials")
 
     if query.data == "today":
         today = fetch_today_attendance(session)
@@ -244,17 +261,21 @@ if __name__ == "__main__":
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(register_button, pattern="register")],
         states={
-            ASK_ERP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_erp)],
-            ASK_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_pass)],
+            ASK_ERP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ask_erp),
+                CallbackQueryHandler(button_handler, pattern="menu")
+            ],
+            ASK_PASS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ask_pass),
+                CallbackQueryHandler(button_handler, pattern="menu")
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("register", register))  # old method
-    app.add_handler(CommandHandler("menu", menu))
     app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(?!register).*"))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern=".*"))
 
     print("✅ Bot is running...")
     app.run_polling()

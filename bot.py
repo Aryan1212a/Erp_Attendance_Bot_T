@@ -1,4 +1,3 @@
-# bot.py
 import os
 import logging
 from dotenv import load_dotenv
@@ -7,7 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ConversationHandler, ContextTypes, filters
+)
 from firebase_admin import credentials, firestore, initialize_app
 
 # ---------- Logging ----------
@@ -120,10 +122,53 @@ def fetch_subject_attendance(session, from_date, to_date):
     subjects = data[:-1]
     return subjects, overall
 
-# ---------- Handlers ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome!\nRegister using:\n`/register <ERP_ID> <Password>`", parse_mode="Markdown")
+# ---------- Registration Conversation ----------
+ASK_ERP, ASK_PASS = range(2)
+temp_data = {}
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📝 Register", callback_data="register")],
+        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
+    ]
+    await update.message.reply_text(
+        "👋 Welcome!\nChoose an option:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def register_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("✏️ Please enter your ERP ID:")
+    return ASK_ERP
+
+async def ask_erp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    temp_data[user_id] = {"erp_id": update.message.text}
+    await update.message.reply_text("🔑 Now enter your ERP Password:")
+    return ASK_PASS
+
+async def ask_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in temp_data:
+        await update.message.reply_text("⚠️ Something went wrong. Please try again.")
+        return ConversationHandler.END
+
+    temp_data[user_id]["password"] = update.message.text
+    erp_id = temp_data[user_id]["erp_id"]
+    password = temp_data[user_id]["password"]
+
+    save_user(user_id, erp_id, password)
+
+    await update.message.reply_text(f"✅ Registered successfully!\nERP ID: {erp_id}")
+    temp_data.pop(user_id, None)
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Registration cancelled.")
+    return ConversationHandler.END
+
+# ---------- Old /register command ----------
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         erp_id, password = context.args
@@ -132,6 +177,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("⚠️ Usage: `/register <ERP_ID> <Password>`", parse_mode="Markdown")
 
+# ---------- Menu + Buttons ----------
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
@@ -193,9 +239,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Main ----------
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # Register conversation handler
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(register_button, pattern="register")],
+        states={
+            ASK_ERP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_erp)],
+            ASK_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_pass)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("register", register))
+    app.add_handler(CommandHandler("register", register))  # old method
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(?!register).*"))
+
     print("✅ Bot is running...")
     app.run_polling()

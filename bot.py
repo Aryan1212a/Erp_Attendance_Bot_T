@@ -1,15 +1,8 @@
 import os
 import logging
 from dotenv import load_dotenv
-
-# Load .env variables locally
-load_dotenv()
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ConversationHandler, ContextTypes, filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters, ConversationHandler
 from firebase_admin import credentials, firestore, initialize_app
 import requests
 from bs4 import BeautifulSoup
@@ -17,15 +10,13 @@ from bs4 import BeautifulSoup
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 
-# ---------- Telegram Bot Token ----------
+# ---------- Load env ----------
+load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing!")
 
 # ---------- Firebase Setup ----------
-if not os.getenv("FIREBASE_PROJECT_ID"):
-    raise ValueError("FIREBASE_PROJECT_ID environment variable is missing!")
-
 cred_dict = {
     "type": "service_account",
     "project_id": os.getenv("FIREBASE_PROJECT_ID"),
@@ -38,7 +29,6 @@ cred_dict = {
     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
     "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL")
 }
-
 cred = credentials.Certificate(cred_dict)
 initialize_app(cred)
 db = firestore.client()
@@ -66,10 +56,18 @@ def calculate_insights(present, total):
         color = "🔴"
 
     need_for_75 = max(0, int((0.75 * total - present) / 0.25))
-    can_skip = int(present / 0.75 - total) if total > 0 else 0
+    can_skip = max(0, int(present / 0.75 - total)) if total > 0 else 0
     return perc, color, need_for_75, can_skip
 
-# ---------- ERP Functions ----------
+def menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
+        [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
+        [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
+        [InlineKeyboardButton("ℹ️ About", callback_data="about")]
+    ])
+
+# ---------- ERP ----------
 LOGIN_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/LoginMob"
 TODAY_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/TodayAttendenceRecord"
 SUBJECT_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/AttendenceSubject"
@@ -117,113 +115,59 @@ def fetch_subject_attendance(session, from_date, to_date):
     data = r.json().get("d", [])
     if not data:
         return [], {}
-    overall = data[-1]  # last row = total
+    overall = data[-1]
     subjects = data[:-1]
     return subjects, overall
 
-# ---------- Registration Conversation ----------
-ASK_ERP, ASK_PASS = range(2)
-temp_data = {}
+# ---------- Registration Flow ----------
+REGISTER_ID, REGISTER_PW = range(2)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📝 Register", callback_data="register")],
-        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
-    ]
-    await update.message.reply_text(
-        "👋 Welcome!\nChoose an option:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    keyboard = [[InlineKeyboardButton("📝 Register", callback_data="register")]]
+    await update.message.reply_text("👋 Welcome!\nTap below to register.", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def register_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu")]
-    ]
-    await query.message.reply_text("✏️ Please enter your ERP ID:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return ASK_ERP
+    await query.message.reply_text("🔑 Enter your ERP ID:")
+    return REGISTER_ID
 
-async def ask_erp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    temp_data[user_id] = {"erp_id": update.message.text}
-    keyboard = [
-        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu")]
-    ]
-    await update.message.reply_text("🔑 Now enter your ERP Password:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return ASK_PASS
+async def register_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["erp_id"] = update.message.text.strip()
+    await update.message.reply_text("🔒 Now enter your ERP Password:")
+    return REGISTER_PW
 
-async def ask_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in temp_data:
-        await update.message.reply_text("⚠️ Something went wrong. Please try again.")
-        return ConversationHandler.END
-
-    temp_data[user_id]["password"] = update.message.text
-    erp_id = temp_data[user_id]["erp_id"]
-    password = temp_data[user_id]["password"]
-
-    save_user(user_id, erp_id, password)
-
-    temp_data.pop(user_id, None)
-
-    keyboard = [
-        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
-    ]
-    await update.message.reply_text(
-        f"✅ Registered successfully!\nERP ID: {erp_id}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+async def register_pw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    erp_id = context.user_data["erp_id"]
+    password = update.message.text.strip()
+    save_user(update.effective_user.id, erp_id, password)
+    await update.message.reply_text("✅ Registered successfully!", reply_markup=menu_keyboard())
     return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📊 Menu", callback_data="menu")]
-    ]
-    await update.message.reply_text("❌ Registration cancelled.", reply_markup=InlineKeyboardMarkup(keyboard))
-    return ConversationHandler.END
-
-# ---------- Menu + Buttons ----------
+# ---------- Menu ----------
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
-        [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
-        [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
-        [InlineKeyboardButton("ℹ️ About", callback_data="about")]
-    ]
-    await update.message.reply_text("Choose:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("📌 Choose an option:", reply_markup=menu_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    if query.data == "menu":
-        keyboard = [
-            [InlineKeyboardButton("📝 Register", callback_data="register")],
-            [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
-            [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
-            [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
-            [InlineKeyboardButton("ℹ️ About", callback_data="about")]
-        ]
-        return await query.edit_message_text("📊 Main Menu:", reply_markup=InlineKeyboardMarkup(keyboard))
-
     user = get_user(query.from_user.id)
     if not user:
-        return await query.edit_message_text("❌ Not registered. Please register first from /start")
+        return await query.edit_message_text("❌ Not registered. Use /start to register.")
 
     session = login_erp(user["erp_id"], user["password"])
     if not session:
-        return await query.edit_message_text("❌ Login failed. Check your ERP credentials")
+        return await query.edit_message_text("❌ Login failed. Please re-register.")
 
     if query.data == "today":
         today = fetch_today_attendance(session)
         if not today:
-            return await query.edit_message_text("📭 No classes today")
-        msg = "📅 *Today's Attendance:*\n\n"
-        for t in today:
-            status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
-            msg += f"• {t['NAME']} ({t['TimeSlot']}) → {status}\n"
-        await query.edit_message_text(msg, parse_mode="Markdown")
+            msg = "📭 No classes today"
+        else:
+            msg = "📅 *Today's Attendance:*\n\n"
+            for t in today:
+                status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
+                msg += f"• {t['NAME']} ({t['TimeSlot']}) → {status}\n"
 
     elif query.data in ("subject", "overall"):
         start_date, end_date = fetch_attendance_dates(session)
@@ -244,38 +188,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
                    f"➕ Need {need} more for 75%\n"
                    f"➖ Can skip {skip}")
-        await query.edit_message_text(msg, parse_mode="Markdown")
 
     elif query.data == "about":
         msg = ("ℹ️ *About This Bot*\n\n"
                "📌 Tracks ERP attendance.\n"
                "🛠 Built with Python, Telegram API, Firebase.\n\n"
                "👨‍💻 Developer: Aryan (B.Tech CSE)")
-        await query.edit_message_text(msg, parse_mode="Markdown")
+
+    else:
+        msg = "❓ Unknown option."
+
+    # Always reattach menu
+    await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=menu_keyboard())
 
 # ---------- Main ----------
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Register conversation handler
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(register_button, pattern="register")],
+    reg_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(register_button, pattern="^register$")],
         states={
-            ASK_ERP: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ask_erp),
-                CallbackQueryHandler(button_handler, pattern="menu")
-            ],
-            ASK_PASS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ask_pass),
-                CallbackQueryHandler(button_handler, pattern="menu")
-            ],
+            REGISTER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_id)],
+            REGISTER_PW: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_pw)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[]
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(button_handler, pattern=".*"))
+    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(reg_conv)
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("✅ Bot is running...")
     app.run_polling()

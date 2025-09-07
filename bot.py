@@ -1,21 +1,11 @@
 import os
 import logging
-import requests
 from dotenv import load_dotenv
-from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    ConversationHandler,
-    filters,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters, ConversationHandler
 from firebase_admin import credentials, firestore, initialize_app
+import requests
 from bs4 import BeautifulSoup
-import asyncio
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -211,34 +201,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Always reattach menu
     await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=menu_keyboard())
 
-# ---------- Flask + Webhook ----------
-flask_app = Flask(__name__)
-application = Application.builder().token(TOKEN).build()
-
-# Register handlers
-reg_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(register_button, pattern="^register$")],
-    states={
-        REGISTER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_id)],
-        REGISTER_PW: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_pw)],
-    },
-    fallbacks=[]
-)
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("menu", menu))
-application.add_handler(reg_conv)
-application.add_handler(CallbackQueryHandler(button_handler))
-
-@flask_app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.create_task(application.process_update(update))
-    return "ok", 200
-
-@flask_app.route("/", methods=["GET"])
-def home():
-    return "🤖 Bot is running!", 200
-
+# ---------- Main ----------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    flask_app.run(host="0.0.0.0", port=port)
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    reg_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(register_button, pattern="^register$")],
+        states={
+            REGISTER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_id)],
+            REGISTER_PW: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_pw)],
+        },
+        fallbacks=[]
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(reg_conv)
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    print("✅ Bot is running...")
+    app.run_polling()

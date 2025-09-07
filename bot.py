@@ -2,7 +2,10 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters, ConversationHandler
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes, MessageHandler, filters, ConversationHandler
+)
 from firebase_admin import credentials, firestore, initialize_app
 import requests
 from bs4 import BeautifulSoup
@@ -166,7 +169,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = "📅 *Today's Attendance:*\n\n"
             for t in today:
-                status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
+                tag = t.get("Tag", "")
+                if tag == "P":
+                    status = "✅ Present"
+                elif tag == "A":
+                    status = "❌ Absent"
+                elif tag == "N":
+                    status = "⏳ Not Marked"
+                else:
+                    status = f"❔ {tag}"
                 msg += f"• {t['NAME']} ({t['TimeSlot']}) → {status}\n"
 
     elif query.data in ("subject", "overall"):
@@ -175,14 +186,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.data == "subject":
             msg = "📚 *Subject-wise Attendance:*\n\n"
             for s in subjects:
-                present, total = int(s["Present"]), int(s["Total"])
+                present, total = int(s.get("Present", 0)), int(s.get("Total", 0))
                 perc, color, need, skip = calculate_insights(present, total)
                 msg += (f"{color} {s['NAME']}\n"
                         f"   ✅ {present}/{total} ({perc:.2f}%)\n"
                         f"   ➕ Need {need} more for 75%\n"
                         f"   ➖ Can skip {skip}\n\n")
         else:
-            present, total = int(overall["Present"]), int(overall["Total"])
+            present, total = int(overall.get("Present", 0)), int(overall.get("Total", 0))
             perc, color, need, skip = calculate_insights(present, total)
             msg = (f"📊 *Overall Attendance*\n\n"
                    f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
@@ -194,7 +205,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                "📌 Tracks ERP attendance.\n"
                "🛠 Built with Python, Telegram API, Firebase.\n\n"
                "👨‍💻 Developer: Aryan (B.Tech CSE)")
-
     else:
         msg = "❓ Unknown option."
 

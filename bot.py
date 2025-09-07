@@ -1,5 +1,6 @@
 import os
 import logging
+import requests
 from dotenv import load_dotenv
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,14 +8,14 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
     MessageHandler,
-    filters,
+    ContextTypes,
     ConversationHandler,
+    filters,
 )
 from firebase_admin import credentials, firestore, initialize_app
-import requests
 from bs4 import BeautifulSoup
+import asyncio
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,7 @@ cred_dict = {
     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
     "token_uri": "https://oauth2.googleapis.com/token",
     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL"),
+    "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL")
 }
 cred = credentials.Certificate(cred_dict)
 initialize_app(cred)
@@ -44,9 +45,10 @@ db = firestore.client()
 
 # ---------- Utils ----------
 def save_user(user_id, erp_id, password):
-    db.collection("users").document(str(user_id)).set(
-        {"erp_id": erp_id, "password": password}
-    )
+    db.collection("users").document(str(user_id)).set({
+        "erp_id": erp_id,
+        "password": password
+    })
 
 def get_user(user_id):
     doc = db.collection("users").document(str(user_id)).get()
@@ -68,14 +70,12 @@ def calculate_insights(present, total):
     return perc, color, need_for_75, can_skip
 
 def menu_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
-            [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
-            [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
-            [InlineKeyboardButton("ℹ️ About", callback_data="about")],
-        ]
-    )
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Today Attendance", callback_data="today")],
+        [InlineKeyboardButton("📚 Subject-wise Attendance", callback_data="subject")],
+        [InlineKeyboardButton("📊 Overall Attendance", callback_data="overall")],
+        [InlineKeyboardButton("ℹ️ About", callback_data="about")]
+    ])
 
 # ---------- ERP ----------
 LOGIN_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/LoginMob"
@@ -103,7 +103,7 @@ def login_erp(username, password):
         "btnLogin": "Login",
         "txtDeviceId": "",
         "txtUserName": "",
-        "txtdateofBirth": "",
+        "txtdateofBirth": ""
     }
 
     r2 = session.post(LOGIN_URL, data=payload)
@@ -134,10 +134,7 @@ REGISTER_ID, REGISTER_PW = range(2)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("📝 Register", callback_data="register")]]
-    await update.message.reply_text(
-        "👋 Welcome!\nTap below to register.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await update.message.reply_text("👋 Welcome!\nTap below to register.", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def register_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -154,9 +151,7 @@ async def register_pw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     erp_id = context.user_data["erp_id"]
     password = update.message.text.strip()
     save_user(update.effective_user.id, erp_id, password)
-    await update.message.reply_text(
-        "✅ Registered successfully!", reply_markup=menu_keyboard()
-    )
+    await update.message.reply_text("✅ Registered successfully!", reply_markup=menu_keyboard())
     return ConversationHandler.END
 
 # ---------- Menu ----------
@@ -168,9 +163,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user = get_user(query.from_user.id)
     if not user:
-        return await query.edit_message_text(
-            "❌ Not registered. Use /start to register."
-        )
+        return await query.edit_message_text("❌ Not registered. Use /start to register.")
 
     session = login_erp(user["erp_id"], user["password"])
     if not session:
@@ -194,36 +187,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for s in subjects:
                 present, total = int(s["Present"]), int(s["Total"])
                 perc, color, need, skip = calculate_insights(present, total)
-                msg += (
-                    f"{color} {s['NAME']}\n"
-                    f"   ✅ {present}/{total} ({perc:.2f}%)\n"
-                    f"   ➕ Need {need} more for 75%\n"
-                    f"   ➖ Can skip {skip}\n\n"
-                )
+                msg += (f"{color} {s['NAME']}\n"
+                        f"   ✅ {present}/{total} ({perc:.2f}%)\n"
+                        f"   ➕ Need {need} more for 75%\n"
+                        f"   ➖ Can skip {skip}\n\n")
         else:
             present, total = int(overall["Present"]), int(overall["Total"])
             perc, color, need, skip = calculate_insights(present, total)
-            msg = (
-                f"📊 *Overall Attendance*\n\n"
-                f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
-                f"➕ Need {need} more for 75%\n"
-                f"➖ Can skip {skip}"
-            )
+            msg = (f"📊 *Overall Attendance*\n\n"
+                   f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
+                   f"➕ Need {need} more for 75%\n"
+                   f"➖ Can skip {skip}")
 
     elif query.data == "about":
-        msg = (
-            "ℹ️ *About This Bot*\n\n"
-            "📌 Tracks ERP attendance.\n"
-            "🛠 Built with Python, Telegram API, Firebase.\n\n"
-            "👨‍💻 Developer: Aryan (B.Tech CSE)"
-        )
+        msg = ("ℹ️ *About This Bot*\n\n"
+               "📌 Tracks ERP attendance.\n"
+               "🛠 Built with Python, Telegram API, Firebase.\n\n"
+               "👨‍💻 Developer: Aryan (B.Tech CSE)")
 
     else:
         msg = "❓ Unknown option."
 
+    # Always reattach menu
     await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=menu_keyboard())
 
-# ---------- Flask + Telegram ----------
+# ---------- Flask + Webhook ----------
 flask_app = Flask(__name__)
 application = Application.builder().token(TOKEN).build()
 
@@ -234,9 +222,8 @@ reg_conv = ConversationHandler(
         REGISTER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_id)],
         REGISTER_PW: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_pw)],
     },
-    fallbacks=[],
+    fallbacks=[]
 )
-
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu))
 application.add_handler(reg_conv)
@@ -245,12 +232,12 @@ application.add_handler(CallbackQueryHandler(button_handler))
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put_nowait(update)
+    asyncio.create_task(application.process_update(update))
     return "ok", 200
 
 @flask_app.route("/", methods=["GET"])
 def home():
-    return "Bot is running!", 200
+    return "🤖 Bot is running!", 200
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

@@ -193,7 +193,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 slot = ttoday[i].get("TImeSlot", "⏰ N/A") if i < len(ttoday) else "⏰ N/A"
                 faculty = ttoday[i].get("FacultyName", "👨‍🏫 N/A") if i < len(ttoday) else "👨‍🏫 N/A"
                 room = ttoday[i].get("ShortName", "🏫 N/A") if i < len(ttoday) else "🏫 N/A"
-                status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
+                if t.get("Tag") == "P":
+                    status = "✅ Present"
+                elif t.get("Tag") == "A":
+                    status = "❌ Absent"
+                else:
+                    status = "🟡 Not Marked"
+
                 msg += f"• {t['NAME']} ({slot})\n   👨‍🏫 {faculty} | 🏫 {room}\n   → {status}\n\n"
 
     elif query.data == "weekly_tt":

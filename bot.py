@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,6 +17,8 @@ logging.basicConfig(level=logging.INFO)
 # ---------- Load env ----------
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # put your own Telegram ID in .env
+
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing!")
 
@@ -40,12 +43,18 @@ db = firestore.client()
 def save_user(user_id, erp_id, password):
     db.collection("users").document(str(user_id)).set({
         "erp_id": erp_id,
-        "password": password
+        "password": password,
+        "last_active": datetime.utcnow().isoformat()
     })
 
 def get_user(user_id):
     doc = db.collection("users").document(str(user_id)).get()
     return doc.to_dict() if doc.exists else None
+
+def update_last_active(user_id):
+    db.collection("users").document(str(user_id)).update({
+        "last_active": datetime.utcnow().isoformat()
+    })
 
 def calculate_insights(present, total):
     perc = (present / total) * 100 if total > 0 else 0
@@ -149,10 +158,12 @@ async def register_pw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Menu ----------
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    update_last_active(update.effective_user.id)
     await update.message.reply_text("📌 Choose an option:", reply_markup=menu_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    update_last_active(query.from_user.id)
     await query.answer()
     user = get_user(query.from_user.id)
     if not user:
@@ -167,18 +178,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not today:
             msg = "📭 No classes today"
         else:
+            # fixed new time slots
+            timeslots = [
+                "9:30-10:24", "10:25-11:19", "11:20-12:14",
+                "12:15-1:09", "1:10-2:04", "2:05-2:59", "3:00-3:54"
+            ]
             msg = "📅 *Today's Attendance:*\n\n"
-            for t in today:
-                tag = t.get("Tag", "")
-                if tag == "P":
-                    status = "✅ Present"
-                elif tag == "A":
-                    status = "❌ Absent"
-                elif tag == "N":
-                    status = "⏳ Not Marked"
-                else:
-                    status = f"❔ {tag}"
-                msg += f"• {t['NAME']} ({t['TimeSlot']}) → {status}\n"
+            for idx, t in enumerate(today):
+                slot = timeslots[idx] if idx < len(timeslots) else t.get("TimeSlot", "")
+                status = "✅ Present" if t["Tag"] == "P" else "❌ Absent"
+                msg += f"• {t['NAME']} ({slot}) → {status}\n"
 
     elif query.data in ("subject", "overall"):
         start_date, end_date = fetch_attendance_dates(session)
@@ -186,14 +195,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.data == "subject":
             msg = "📚 *Subject-wise Attendance:*\n\n"
             for s in subjects:
-                present, total = int(s.get("Present", 0)), int(s.get("Total", 0))
+                present, total = int(s["Present"]), int(s["Total"])
                 perc, color, need, skip = calculate_insights(present, total)
                 msg += (f"{color} {s['NAME']}\n"
                         f"   ✅ {present}/{total} ({perc:.2f}%)\n"
                         f"   ➕ Need {need} more for 75%\n"
                         f"   ➖ Can skip {skip}\n\n")
         else:
-            present, total = int(overall.get("Present", 0)), int(overall.get("Total", 0))
+            present, total = int(overall["Present"]), int(overall["Total"])
             perc, color, need, skip = calculate_insights(present, total)
             msg = (f"📊 *Overall Attendance*\n\n"
                    f"{color} ✅ {present}/{total} ({perc:.2f}%)\n"
@@ -204,12 +213,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = ("ℹ️ *About This Bot*\n\n"
                "📌 Tracks ERP attendance.\n"
                "🛠 Built with Python, Telegram API, Firebase.\n\n"
-               "👨‍💻 Developer: Aryan (B.Tech CSE)\n Co-Developer: Aman Kumar (B. Tech CSE)")
+               "👨‍💻 Developer: Aryan (B.Tech CSE)")
+
     else:
         msg = "❓ Unknown option."
 
-    # Always reattach menu
     await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=menu_keyboard())
+
+# ---------- Admin Commands ----------
+async def user_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("⛔ Unauthorized")
+    users = db.collection("users").stream()
+    count = sum(1 for _ in users)
+    await update.message.reply_text(f"👥 Total registered users: {count}")
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("⛔ Unauthorized")
+    users = db.collection("users").stream()
+    user_list = []
+    count = 0
+    for doc in users:
+        data = doc.to_dict()
+        count += 1
+        last_seen = data.get("last_active", "❌ Never")
+        user_list.append(f"👤 {doc.id} → {data.get('erp_id')} (🕒 {last_seen})")
+    if not user_list:
+        await update.message.reply_text("📭 No users registered.")
+    else:
+        msg = f"📋 *Registered Users* ({count}):\n\n" + "\n".join(user_list)
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
 # ---------- Main ----------
 if __name__ == "__main__":
@@ -226,6 +260,8 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("usercount", user_count))
+    app.add_handler(CommandHandler("listusers", list_users))
     app.add_handler(reg_conv)
     app.add_handler(CallbackQueryHandler(button_handler))
 

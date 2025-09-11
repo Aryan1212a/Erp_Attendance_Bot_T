@@ -246,7 +246,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = ("ℹ️ *About This Bot*\n\n"
                "📌 Tracks ERP attendance & timetable.\n"
                "🛠 Built with Python, Telegram API, Firebase.\n\n"
-               "👨‍💻 Developer: Aryan (B.Tech CSE)")
+               "👨‍💻 Developer: Aryan (B.Tech CSE)\n Co Developer: Aman Kumar (B.Tech CSE)")
 
     else:
         msg = "❓ Unknown option."

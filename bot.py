@@ -79,6 +79,16 @@ def menu_keyboard():
         [InlineKeyboardButton("ℹ️ About", callback_data="about")]
     ])
 
+# Telegram legacy Markdown needs escaping for certain characters.
+def md(text):
+    if text is None:
+        return ""
+    text = str(text)
+    text = text.replace("\\", "\\\\")
+    for ch in ("_", "*", "[", "]", "(", ")"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
 # ---------- ERP ----------
 LOGIN_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/LoginMob"
 TODAY_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/TodayAttendenceRecord"
@@ -190,9 +200,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = "📅 *Today's Attendance:*\n\n"
             for i, t in enumerate(today):
-                slot = ttoday[i].get("TImeSlot", "⏰ N/A") if i < len(ttoday) else "⏰ N/A"
-                faculty = ttoday[i].get("FacultyName", "👨‍🏫 N/A") if i < len(ttoday) else "👨‍🏫 N/A"
-                room = ttoday[i].get("ShortName", "🏫 N/A") if i < len(ttoday) else "🏫 N/A"
+                slot = md(ttoday[i].get("TImeSlot", "⏰ N/A")) if i < len(ttoday) else md("⏰ N/A")
+                faculty = md(ttoday[i].get("FacultyName", "👨‍🏫 N/A")) if i < len(ttoday) else md("👨‍🏫 N/A")
+                room = md(ttoday[i].get("ShortName", "🏫 N/A")) if i < len(ttoday) else md("🏫 N/A")
                 if t.get("Tag") == "P":
                     status = "✅ Present"
                 elif t.get("Tag") == "A":
@@ -200,7 +210,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     status = "🟡 Not Marked"
 
-                msg += f"• {t['NAME']} ({slot})\n   👨‍🏫 {faculty} | 🏫 {room}\n   → {status}\n\n"
+                msg += f"• {md(t.get('NAME', 'N/A'))} ({slot})\n   👨‍🏫 {faculty} | 🏫 {room}\n   → {status}\n\n"
 
     elif query.data == "weekly_tt":
         week_tt = fetch_weekly_timetable(session)
@@ -213,12 +223,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 days.setdefault(day, []).append(entry)
             msg = "📆 *Weekly Timetable:*\n\n"
             for day, slots in days.items():
-                msg += f"📌 *{day}*\n"
+                msg += f"📌 *{md(day)}*\n"
                 for s in slots:
-                    slot = s.get("TImeSlot", "⏰ N/A")
-                    subj = s.get("Subject", s.get("SubjectCode", "📚 N/A"))
-                    faculty = s.get("FacultyName", "👨‍🏫 N/A")
-                    room = s.get("ShortName", "🏫 N/A")
+                    slot = md(s.get("TImeSlot", "⏰ N/A"))
+                    subj = md(s.get("Subject", s.get("SubjectCode", "📚 N/A")))
+                    faculty = md(s.get("FacultyName", "👨‍🏫 N/A"))
+                    room = md(s.get("ShortName", "🏫 N/A"))
                     msg += f"• {subj} ({slot})\n   👨‍🏫 {faculty} | 🏫 {room}\n"
                 msg += "\n"
 
@@ -230,7 +240,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for s in subjects:
                 present, total = int(s["Present"]), int(s["Total"])
                 perc, color, need, skip = calculate_insights(present, total)
-                msg += (f"{color} {s['NAME']}\n"
+                msg += (f"{color} {md(s.get('NAME', 'N/A'))}\n"
                         f"   ✅ {present}/{total} ({perc:.2f}%)\n"
                         f"   ➕ Need {need} more for 75%\n"
                         f"   ➖ Can skip {skip}\n\n")

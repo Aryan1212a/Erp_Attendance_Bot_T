@@ -1,11 +1,13 @@
+import os
 import subprocess
 from threading import Thread
 from api import app as flask_app
 
 def run_api():
+    port = int(os.environ.get("PORT", 8080))
     flask_app.run(
         host="0.0.0.0",
-        port=8000,
+        port=port,
         debug=False
     )
 

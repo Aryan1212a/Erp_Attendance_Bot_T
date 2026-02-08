@@ -1,5 +1,5 @@
+import subprocess
 from threading import Thread
-from bot import app as telegram_app
 from api import app as flask_app
 
 def run_api():
@@ -9,10 +9,9 @@ def run_api():
         debug=False
     )
 
-if __name__ == "__main__":
-    # Start REST API for Android
-    Thread(target=run_api).start()
+def run_bot():
+    subprocess.Popen(["python", "bot.py"])
 
-    # Start Telegram bot
-    telegram_app.run_polling()
-    
+if __name__ == "__main__":
+    Thread(target=run_api).start()
+    run_bot()

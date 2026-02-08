@@ -4,17 +4,13 @@ from erp_api import (
     fetch_today_attendance,
     fetch_attendance_dates,
     fetch_subject_attendance,
-    fetch_weekly_timetable
+    fetch_timetable   # ← REAL function
 )
 
 app = Flask(__name__)
 
 def get_session(data):
-    erp_id = data.get("erp_id")
-    password = data.get("password")
-    session = login_erp(erp_id, password)
-    if not session:
-        return None
+    session = login_erp(data.get("erp_id"), data.get("password"))
     return session
 
 @app.route("/today-attendance", methods=["POST"])
@@ -22,7 +18,6 @@ def today_attendance():
     session = get_session(request.json)
     if not session:
         return jsonify({"error": "Invalid credentials"}), 401
-
     return jsonify(fetch_today_attendance(session))
 
 @app.route("/subject-attendance", methods=["POST"])
@@ -51,7 +46,7 @@ def timetable():
     if not session:
         return jsonify({"error": "Invalid credentials"}), 401
 
-    return jsonify(fetch_weekly_timetable(session))
+    return jsonify(fetch_timetable(session))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)

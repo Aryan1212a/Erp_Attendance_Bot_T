@@ -1,47 +1,57 @@
 from flask import Flask, request, jsonify
-import os
 from erp_api import (
     login_erp,
     fetch_today_attendance,
+    fetch_attendance_dates,
     fetch_subject_attendance,
-    fetch_overall_attendance,
-    fetch_timetable
+    fetch_weekly_timetable
 )
 
 app = Flask(__name__)
 
-def get_session():
-    data = request.json
-    return login_erp(data["erp_id"], data["password"])
+def get_session(data):
+    erp_id = data.get("erp_id")
+    password = data.get("password")
+    session = login_erp(erp_id, password)
+    if not session:
+        return None
+    return session
 
 @app.route("/today-attendance", methods=["POST"])
 def today_attendance():
-    session = get_session()
+    session = get_session(request.json)
     if not session:
-        return jsonify({"error": "Login failed"}), 401
+        return jsonify({"error": "Invalid credentials"}), 401
+
     return jsonify(fetch_today_attendance(session))
 
 @app.route("/subject-attendance", methods=["POST"])
 def subject_attendance():
-    session = get_session()
+    session = get_session(request.json)
     if not session:
-        return jsonify({"error": "Login failed"}), 401
-    return jsonify(fetch_subject_attendance(session))
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    start, end = fetch_attendance_dates(session)
+    subjects, _ = fetch_subject_attendance(session, start, end)
+    return jsonify(subjects)
 
 @app.route("/overall-attendance", methods=["POST"])
 def overall_attendance():
-    session = get_session()
+    session = get_session(request.json)
     if not session:
-        return jsonify({"error": "Login failed"}), 401
-    return jsonify(fetch_overall_attendance(session))
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    start, end = fetch_attendance_dates(session)
+    _, overall = fetch_subject_attendance(session, start, end)
+    return jsonify(overall)
 
 @app.route("/timetable", methods=["POST"])
 def timetable():
-    session = get_session()
+    session = get_session(request.json)
     if not session:
-        return jsonify({"error": "Login failed"}), 401
-    return jsonify(fetch_timetable(session))
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    return jsonify(fetch_weekly_timetable(session))
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=8080)

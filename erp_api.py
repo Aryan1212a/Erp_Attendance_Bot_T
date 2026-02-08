@@ -5,6 +5,8 @@ LOGIN_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/LoginMob"
 TODAY_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/TodayAttendenceRecord"
 SUBJECT_ATT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/AttendenceSubject"
 DATE_RANGE_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/GetAttDateFor"
+TODAY_TT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/TodayTimeTableRecord"
+WEEKLY_TT_URL = "https://dbit.servergi.com:8079/MISIMDBITLatest/Service/WSDataServices.asmx/MonthlyTimeTableRecord"
 
 def login_erp(username, password):
     session = requests.Session()
@@ -28,7 +30,6 @@ def login_erp(username, password):
         "txtUserName": "",
         "txtdateofBirth": ""
     }
-
     r2 = session.post(LOGIN_URL, data=payload)
     if "Login failed" in r2.text or "Invalid" in r2.text:
         return None
@@ -48,6 +49,14 @@ def fetch_subject_attendance(session, from_date, to_date):
     data = r.json().get("d", [])
     if not data:
         return [], {}
-    overall = data[-1]  # last row = total
+    overall = data[-1]
     subjects = data[:-1]
     return subjects, overall
+
+def fetch_today_timetable(session):
+    r = session.post(TODAY_TT_URL, json={"param": ""})
+    return r.json().get("d", [])
+
+def fetch_weekly_timetable(session):
+    r = session.post(WEEKLY_TT_URL, json={"param": ""})
+    return r.json().get("d", [])
